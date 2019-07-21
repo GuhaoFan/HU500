@@ -58,7 +58,6 @@ def time_window(dt):
         return 1    
 
 def update_dataframe(df_csv):
-    n = 0
 
     for chunk in pandas.read_csv(df_csv, chunksize=CHUNK_SIZE):
         
