@@ -7,9 +7,9 @@ import pytz
 from datetime import datetime, time
 import os
 
-CHUNK_SIZE = 10**2
+CHUNK_SIZE = 10**5
 OUTPUT = "real_data.csv"
-N_CHUNK = 5
+
 
 def haversine(lon1, lat1, lon2, lat2):
     """
@@ -58,7 +58,6 @@ def time_window(dt):
         return 1    
 
 def update_dataframe(df_csv):
-    n = 0
 
     for chunk in pandas.read_csv(df_csv, chunksize=CHUNK_SIZE):
         
@@ -97,9 +96,6 @@ def update_dataframe(df_csv):
         with open(OUTPUT, "a") as f:
             revised_chunk.to_csv(f, header=False, mode='a', line_terminator="\n")
 
-        n += 1
-        if n > N_CHUNK:
-            break
         # break here if in test mode, if you only want to see one chunk of data 
 
 
