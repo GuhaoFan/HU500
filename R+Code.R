@@ -2,54 +2,120 @@
 install.packages("sqldf")
 install.packages("geosphere")
 install.packages("lubridate")
+install.packages("ggplot2")
+install.packages("sp")
+install.packages("rgdal")
+
 
 ###Randomly Selected Data Base with No of Obs = 1000
+library(readr)
 library(sqldf)
-data0 = read.csv.sql("~/Downloads/new-york-city-taxi-fare-prediction/train.csv", sql = "select * from file order by random() limit 1000")
+library(ggplot2)
+library(sp)
+library(rgdal)
+library(geosphere)
 
+data0 <- read_csv("E:/hu500/HU500/pre-process/real_data.csv")
 
-###Data to begin
+###Data to begin, create a copy
 dat0 = data0
 
-###Prepare the data with additional calculated variables 
-##Distance
-library(geosphere)
-dat0$dist = distHaversine(dat0[,c('pickup_longitude','pickup_latitude')], dat0[,c('dropoff_longitude','dropoff_latitude')])
+###cleanup1: by human knowledge
+dat0$distance[dat0$distance <= 0] = NA
+dat0$pickup_long[dat0$pickup_long == 0] = NA
+dat0$pickup_lat[dat0$pickup_lat == 0] = NA
+dat0$dropoff_long[dat0$dropoff_long == 0] = NA
+dat0$dropoff_lat[dat0$dropoff_lat == 0] = NA
 
-##Break down the pickup Day and Time
-dat0$pickup_day = weekdays(as.Date(dat0$pickup_datetime))
-dat0$pickup_time = as.numeric(as.POSIXct(dat0$pickup_datetime))
-library(stringr)
-library(lubridate)
-library(plyr)
-dat0$pickup_hour = hour(dat0$pickup_datetime)
-library(Hmisc)
-dat0$hour_group = cut2(dat0$pickup_hour,c(6,11,16,20))
-levels(dat0$hour_group)
-dat0$day_group = ifelse(dat0$pickup_day %in% c("Saturday", "Sunday"), "Weekend", "Weekday")
+dat0$pickup_long[dat0$pickup_long < -100] = NA
+dat0$pickup_long[dat0$pickup_long > -50] = NA
+dat0$pickup_lat[dat0$pickup_lat < 20] = NA
+dat0$pickup_lat[dat0$pickup_lat > 60] = NA
+
+dat0$dropoff_long[dat0$dropoff_long < -100] = NA
+dat0$dropoff_long[dat0$dropoff_long > -50] = NA
+dat0$dropoff_lat[dat0$dropoff_lat < 20] = NA
+dat0$dropoff_lat[dat0$dropoff_lat > 60] = NA
+
+dat0$pickup_long[abs(dat0$pickup_long) > 180] = NA
+dat0$pickup_lat[abs(dat0$pickup_lat) > 90] = NA
+dat0$dropoff_long[abs(dat0$dropoff_long) > 180] = NA
+dat0$dropoff_lat[abs(dat0$dropoff_lat) > 90] = NA
+
+summary(dat0)
+
+###First remove unused columns
+no_miss <- dat0[complete.cases(dat0), ]
+summary(no_miss)
 
 
-###First Base Data to fit regression
-dat1 = dat0[,-c(1,3:7,12:14)]
-str(dat1)
-dat1$pickup_day = factor(dat1$pickup_day)
-dat1.numeric = dat1[c(-4)]
-pairs(dat1)
-cor(dat1.numeric)
+###Kmean cluster coords (lat, long)
+geo.dist = function(df) {
+  require(geosphere)
+  d <- function(i,z){
+    dist <- rep(0,nrow(z))
+    dist[i:nrow(z)] <- distHaversine(z[i:nrow(z),1:2],z[i,1:2])
+    return(dist)
+  }
+  dm <- do.call(cbind,lapply(1:nrow(df),d,df))
+  return(as.dist(dm))
+}
 
-fit1 = lm(fare_amount~., data=dat1)
-summary(fit1)
-anova(fit1)
+# FAILED ON WOODEN COMPUTER
+# only_coord <- no_miss[,c(4,5)]
+# km <- kmeans(geo.dist(only_coord),centers=4)
+# hc <- hclust(geo.dist(only_coord))  
 
-###Second Base Data to fit regression
-dat2 = dat0[,-c(1,3:7,10:12)]
-str(dat2)
-dat2$hour_group = factor(dat2$hour_group)
-dat2$day_group = factor(dat2$day_group)
-dat2.numeric = dat2[-c(4:5)]
-pairs(dat2)
-cor(dat2.numeric)
 
-fit2 = lm(fare_amount~., data=dat2)
-summary(fit2)
-anova(fit2)
+###cleanup2 by cutoffs
+dat1 = no_miss[,-c(1,3,4,5,6,7)]
+K = 5
+N = nrow(dat1)
+model1 = lm(fare ~ . ,data=dat1)
+
+## laverage cutoff
+leverage = hatvalues(model1)
+cutleverage = (2*K + 2) / N
+badlaverage = as.numeric(leverage > cutleverage)
+table(badlaverage)
+
+## cook cutoff
+cooks = cooks.distance(model1)
+cutcook = 4 / (N-K-1)
+badcooks = as.numeric(cooks > cutcook)
+table(badcooks)
+
+## mahalnobis cutoff 
+mahal = mahalanobis(
+  dat1,
+  colMeans(dat1, na.rm=TRUE),
+  cov(dat1, use="pairwise.complete.obs")
+)
+cutmahal = qchisq(1-.001,ncol(dat1))
+badmahal = as.numeric(mahal > cutmahal)
+table(badmahal)
+
+## remove outlier
+total = badmahal + badcooks + badlaverage
+noout = subset(dat1, total < 1)
+
+## revised model.
+model2 = lm(fare ~ . ,data=noout)
+summary(model2, correlation = TRUE)
+
+### linearity
+standardized = rstudent(model2)
+fitted = scale(model2$fitted.values)
+qqnorm(standardized)
+abline(0,1)
+
+### normality
+hist(standardized, breaks = 1000)
+
+### homogeneous
+plot(fitted)
+abline(0,0)
+abline(v = 0)
+
+
+
